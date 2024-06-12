@@ -4,6 +4,9 @@
 
 - 🌱 I’m currently learning how to live
 
+### Profile Views:
+![Profile Views](https://komarev.com/ghpvc/?username=brtaxc&style=flat-square)
+
 ### Languages and Tools:
 ![Python](https://img.shields.io/badge/Python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
 ![C++](https://img.shields.io/badge/C++-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white)
