@@ -1,4 +1,4 @@
-## Hi 👋, I'm B3rat1337
+## Hi 👋, I'm BeratBey
 
 ### a guy who loves requests
 
