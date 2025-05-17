@@ -1,0 +1,622 @@
+-- esp [wip]
+
+local players = cloneref(game:GetService("Players"))
+local client = players.LocalPlayer
+local camera = workspace.CurrentCamera
+local userInputService = cloneref(game:GetService("UserInputService"))
+
+getgenv().global = getgenv()
+
+function global.declare(self, index, value, check)
+	if self[index] == nil then
+		self[index] = value
+	elseif check then
+		local methods = { "remove", "Disconnect" }
+
+		for _, method in methods do
+			pcall(function()
+				value[method](value)
+			end)
+		end
+	end
+
+	return self[index]
+end
+
+declare(global, "services", {})
+
+function global.get(service)
+	return services[service]
+end
+
+declare(declare(services, "loop", {}), "cache", {})
+
+get("loop").new = function(self, index, func, disabled)
+	if disabled == nil and (func == nil or typeof(func) == "boolean") then
+		disabled = func func = index
+	end
+
+	self.cache[index] = {
+		["enabled"] = (not disabled),
+		["func"] = func,
+		["toggle"] = function(self, boolean)
+			if boolean == nil then
+				self.enabled = not self.enabled
+			else
+				self.enabled = boolean
+			end
+		end,
+		["remove"] = function()
+			self.cache[index] = nil
+		end
+	}
+
+	return self.cache[index]
+end
+
+declare(get("loop"), "connection", cloneref(game:GetService("RunService")).RenderStepped:Connect(function(delta)
+	for _, loop in get("loop").cache do
+		if loop.enabled then
+			local success, result = pcall(function()
+				loop.func(delta)
+			end)
+
+			if not success then
+				warn(result)
+			end
+		end
+	end
+end), true)
+
+declare(services, "new", {})
+
+get("new").drawing = function(class, properties)
+	local drawing = Drawing.new(class)
+	for property, value in properties do
+		pcall(function()
+			drawing[property] = value
+		end)
+	end
+	return drawing
+end
+
+declare(declare(services, "player", {}), "cache", {})
+
+get("player").find = function(self, player)
+	for character, data in self.cache do
+		if data.player == player then
+			return character
+		end
+	end
+end
+
+get("player").check = function(self, player)
+	local success, check = pcall(function()
+		local character = player:IsA("Player") and player.Character or player
+		local children = { character.Humanoid, character.HumanoidRootPart }
+
+		return children and character.Parent ~= nil
+	end)
+
+	return success and check
+end
+
+get("player").new = function(self, player)
+	local function cache(character)
+		print("caching", character)
+		self.cache[character] = {
+			["player"] = player,
+			["drawings"] = {
+				["box"] = get("new").drawing("Square", { Visible = false }),
+				["boxFilled"] = get("new").drawing("Square", { Visible = false, Filled = true }),
+				["boxOutline"] = get("new").drawing("Square", { Visible = false }),
+				["name"] = get("new").drawing("Text", { Visible = false, Center = true}),
+				["health"] = get("new").drawing("Line", { Visible = false }),
+				["healthOutline"] = get("new").drawing("Line", { Visible = false }),
+				["healthText"] = get("new").drawing("Text", { Visible = false, Center = false}),
+				["distance"] = get("new").drawing("Text", { Visible = false, Center = true}),
+				["weapon"] = get("new").drawing("Text", { Visible = false, Center = true}),
+			}
+		}
+	end
+
+	local function check(character)
+		if self:check(character) then
+			cache(character)
+		else
+			local listener; listener = character.ChildAdded:Connect(function()
+				if self:check(character) then
+					cache(character) listener:Disconnect()
+				end
+			end)
+		end
+	end
+
+	if player.Character then check(player.Character) end
+	player.CharacterAdded:Connect(check)
+end
+
+get("player").remove = function(self, player)
+	print("removing", player)
+	if player:IsA("Player") then
+		local character = self:find(player)
+		if character then
+			self:remove(character)
+		end
+	else
+		local drawings = self.cache[player].drawings self.cache[player] = nil
+
+		for _, drawing in drawings do
+			drawing:Remove()
+		end
+	end
+end
+
+get("player").update = function(self, character, data)
+	if not self:check(character) then
+		self:remove(character)
+	end
+
+	local player = data.player
+	local root = character.HumanoidRootPart
+	local humanoid = character.Humanoid
+	local drawings = data.drawings
+
+	if self:check(client) then
+		data.distance = (client.Character.HumanoidRootPart.CFrame.Position - root.CFrame.Position).Magnitude
+	end
+
+	local weapon = character:FindFirstChildWhichIsA("Tool") or "none"
+
+	task.spawn(function()
+		local position, visible = camera:WorldToViewportPoint(root.CFrame.Position)
+
+		local visuals = features.visuals
+
+		local function check()
+			local team; if visuals.teamCheck then team = player.Team ~= client.Team else team = true end
+			return visuals.enabled and data.distance and data.distance <= visuals.renderDistance and team
+		end
+
+		local function color(color)
+			if visuals.teamColor then
+				color = player.TeamColor.Color
+			end
+			return color
+		end
+
+		if visible and check() then
+			local scale = 1 / (position.Z * math.tan(math.rad(camera.FieldOfView * 0.5)) * 2) * 1000
+			local width, height = math.floor(4.5 * scale), math.floor(6 * scale)
+			local x, y = math.floor(position.X), math.floor(position.Y)
+			local xPosition, yPostion = math.floor(x - width * 0.5), math.floor((y - height * 0.5) + (0.5 * scale))
+
+			drawings.box.Size = Vector2.new(width, height)
+			drawings.box.Position = Vector2.new(xPosition, yPostion)
+			drawings.boxFilled.Size = drawings.box.Size
+			drawings.boxFilled.Position = drawings.box.Position
+			drawings.boxOutline.Size = drawings.box.Size
+			drawings.boxOutline.Position = drawings.box.Position
+
+			drawings.box.Color = color(visuals.boxes.color)
+			drawings.box.Thickness = 1
+			drawings.boxFilled.Color = color(visuals.boxes.filled.color)
+			drawings.boxFilled.Transparency = visuals.boxes.filled.transparency
+			drawings.boxOutline.Color = visuals.boxes.outline.color
+			drawings.boxOutline.Thickness = 3
+
+			drawings.boxOutline.ZIndex = drawings.box.ZIndex - 1
+			drawings.boxFilled.ZIndex = drawings.boxOutline.ZIndex - 1
+
+			drawings.name.Text = `[ {player.Name} ]`
+			drawings.name.Size = math.max(math.min(math.abs(12.5 * scale), 12.5), 10)
+			drawings.name.Position = Vector2.new(x, (yPostion - drawings.name.TextBounds.Y) - 2)
+			drawings.name.Color = color(visuals.names.color)
+			drawings.name.Outline = visuals.names.outline.enabled
+			drawings.name.OutlineColor = visuals.names.outline.color
+
+			drawings.name.ZIndex = drawings.box.ZIndex + 1
+
+			local healthPercent = 100 / (humanoid.MaxHealth / humanoid.Health)
+		
+			drawings.healthOutline.From = Vector2.new(xPosition - 5, yPostion)
+			drawings.healthOutline.To = Vector2.new(xPosition - 5, yPostion + height)
+			drawings.health.From = Vector2.new(xPosition - 5, (yPostion + height) - 1)
+			drawings.health.To = Vector2.new(xPosition - 5, ((drawings.health.From.Y - ((height / 100) * healthPercent))) + 2)
+			drawings.healthText.Text = `[ HP {math.floor(humanoid.Health)} ]`
+			drawings.healthText.Size = math.max(math.min(math.abs(11 * scale), 11), 10)
+			drawings.healthText.Position = Vector2.new(drawings.health.To.X - (drawings.healthText.TextBounds.X + 3), (drawings.health.To.Y - (2 / scale)))
+
+			drawings.health.Color = visuals.health.colorLow:Lerp(visuals.health.color, healthPercent * 0.01)
+			drawings.healthOutline.Color = visuals.health.outline.color
+			drawings.healthOutline.Thickness = 3
+			drawings.healthText.Color = drawings.health.Color
+			drawings.healthText.Outline = visuals.health.text.outline.enabled
+			drawings.healthText.OutlineColor = visuals.health.outline.color
+
+			drawings.healthOutline.ZIndex = drawings.health.ZIndex - 1
+
+			drawings.distance.Text = `[ {math.floor(data.distance)} ]`
+			drawings.distance.Size = math.max(math.min(math.abs(11 * scale), 11), 10)
+			drawings.distance.Position = Vector2.new(x, (yPostion + height) + (drawings.distance.TextBounds.Y * 0.25))
+			drawings.distance.Color = color(visuals.distance.color)
+			drawings.distance.Outline = visuals.distance.outline.enabled
+			drawings.distance.OutlineColor = visuals.distance.outline.color
+			
+			drawings.weapon.Text = `[ {weapon} ]`
+			drawings.weapon.Size = math.max(math.min(math.abs(11 * scale), 11), 10)
+			drawings.weapon.Position = visuals.distance.enabled and Vector2.new(drawings.distance.Position.x, drawings.distance.Position.Y + (drawings.weapon.TextBounds.Y * 0.75)) or drawings.distance.Position
+			drawings.weapon.Color = color(visuals.weapon.color)
+			drawings.weapon.Outline = visuals.weapon.outline.enabled
+			drawings.weapon.OutlineColor = visuals.weapon.outline.color
+		end
+
+		drawings.box.Visible = (check() and visible and visuals.boxes.enabled)
+		drawings.boxFilled.Visible = (check() and drawings.box.Visible and visuals.boxes.filled.enabled)
+		drawings.boxOutline.Visible = (check() and drawings.box.Visible and visuals.boxes.outline.enabled)
+		drawings.name.Visible = (check() and visible and visuals.names.enabled)
+		drawings.health.Visible = (check() and visible and visuals.health.enabled)
+		drawings.healthOutline.Visible = (check() and drawings.health.Visible and visuals.health.outline.enabled)
+		drawings.healthText.Visible = (check() and drawings.health.Visible and visuals.health.text.enabled)
+		drawings.distance.Visible = (check() and visible and visuals.distance.enabled)
+		drawings.weapon.Visible = (check() and visible and visuals.weapon.enabled)
+	end)
+end
+
+declare(get("player"), "loop", get("loop"):new(function ()
+	for character, data in get("player").cache do
+		get("player"):update(character, data)
+	end
+end), true)
+
+declare(global, "features", {})
+
+features.toggle = function(self, feature, boolean)
+	if self[feature] then
+		if boolean == nil then
+			self[feature].enabled = not self[feature].enabled
+		else
+			self[feature].enabled = boolean
+		end
+
+		if self[feature].toggle then
+			task.spawn(function()
+				self[feature]:toggle()
+			end)
+		end
+	end
+end
+
+declare(features, "visuals", {
+	["enabled"] = true,
+	["teamCheck"] = false,
+	["teamColor"] = true,
+	["renderDistance"] = 2000,
+
+	["boxes"] = {
+		["enabled"] = true,
+		["color"] = Color3.fromRGB(255, 255, 255),
+		["outline"] = {
+			["enabled"] = true,
+			["color"] = Color3.fromRGB(0, 0, 0),
+		},
+		["filled"] = {
+			["enabled"] = true,
+			["color"] = Color3.fromRGB(255, 255, 255),
+			["transparency"] = 0.25
+		},
+	},
+	["names"] = {
+		["enabled"] = true,
+		["color"] = Color3.fromRGB(255, 255, 255),
+		["outline"] = {
+			["enabled"] = true,
+			["color"] = Color3.fromRGB(0, 0, 0),
+		},
+	},
+	["health"] = {
+		["enabled"] = true,
+		["color"] = Color3.fromRGB(0, 255, 0),
+		["colorLow"] = Color3.fromRGB(255, 0, 0),
+		["outline"] = {
+			["enabled"] = true,
+			["color"] = Color3.fromRGB(0, 0, 0)
+		},
+		["text"] = {
+			["enabled"] = true,
+			["outline"] = {
+				["enabled"] = true,
+			},
+		}
+	},
+	["distance"] = {
+		["enabled"] = true,
+		["color"] = Color3.fromRGB(255, 255, 255),
+		["outline"] = {
+			["enabled"] = true,
+			["color"] = Color3.fromRGB(0, 0, 0),
+		},
+	},
+	["weapon"] = {
+		["enabled"] = true,
+		["color"] = Color3.fromRGB(255, 255, 255),
+		["outline"] = {
+			["enabled"] = true,
+			["color"] = Color3.fromRGB(0, 0, 0),
+		},
+	}
+})
+
+-- Menu System
+declare(global, "menu", {
+    ["visible"] = false,
+    ["elements"] = {},
+    ["menuKey"] = Enum.KeyCode.Insert,  -- Changed from RightShift to Insert
+    ["isDragging"] = false,
+    ["dragOffset"] = Vector2.new(0, 0),
+    ["changeKeyMode"] = false
+})
+
+menu.create = function()
+    local menuBackground = get("new").drawing("Square", {
+        Visible = false,
+        Filled = true,
+        Color = Color3.fromRGB(30, 30, 30),
+        Size = Vector2.new(200, 220),  -- Increased height for the new button
+        Position = Vector2.new(20, 20),
+        Transparency = 0.8
+    })
+    
+    -- Header/Title Bar
+    local menuHeader = get("new").drawing("Square", {
+        Visible = false,
+        Filled = true,
+        Color = Color3.fromRGB(40, 40, 40),
+        Size = Vector2.new(200, 30),
+        Position = Vector2.new(20, 20),
+        Transparency = 0.9
+    })
+    
+    local menuTitle = get("new").drawing("Text", {
+        Visible = false,
+        Center = true,
+        Text = "ESP Menü",
+        Size = 18,
+        Color = Color3.fromRGB(255, 255, 255),
+        Position = Vector2.new(menuHeader.Position.X + menuHeader.Size.X / 2, menuHeader.Position.Y + 7),
+        Outline = true,
+        OutlineColor = Color3.fromRGB(0, 0, 0)
+    })
+    
+    -- ESP Toggle Button
+    local espButton = get("new").drawing("Square", {
+        Visible = false,
+        Filled = true,
+        Color = features.visuals.enabled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0),
+        Size = Vector2.new(180, 30),
+        Position = Vector2.new(menuBackground.Position.X + 10, menuHeader.Position.Y + 40),
+        Transparency = 0.8
+    })
+    
+    local espButtonText = get("new").drawing("Text", {
+        Visible = false,
+        Center = true,
+        Text = features.visuals.enabled and "ESP: AÇIK" or "ESP: KAPALI",
+        Size = 16,
+        Color = Color3.fromRGB(255, 255, 255),
+        Position = Vector2.new(espButton.Position.X + espButton.Size.X / 2, espButton.Position.Y + 7),
+        Outline = true,
+        OutlineColor = Color3.fromRGB(0, 0, 0)
+    })
+    
+    -- Team Check Button
+    local teamCheckButton = get("new").drawing("Square", {
+        Visible = false,
+        Filled = true,
+        Color = features.visuals.teamCheck and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0),
+        Size = Vector2.new(180, 30),
+        Position = Vector2.new(menuBackground.Position.X + 10, espButton.Position.Y + 40),
+        Transparency = 0.8
+    })
+    
+    local teamCheckButtonText = get("new").drawing("Text", {
+        Visible = false,
+        Center = true,
+        Text = features.visuals.teamCheck and "Takım Kontrolü: AÇIK" or "Takım Kontrolü: KAPALI",
+        Size = 16,
+        Color = Color3.fromRGB(255, 255, 255),
+        Position = Vector2.new(teamCheckButton.Position.X + teamCheckButton.Size.X / 2, teamCheckButton.Position.Y + 7),
+        Outline = true,
+        OutlineColor = Color3.fromRGB(0, 0, 0)
+    })
+    
+    -- Menu Key Button (NEW)
+    local menuKeyButton = get("new").drawing("Square", {
+        Visible = false,
+        Filled = true,
+        Color = Color3.fromRGB(60, 60, 200),
+        Size = Vector2.new(180, 30),
+        Position = Vector2.new(menuBackground.Position.X + 10, teamCheckButton.Position.Y + 40),
+        Transparency = 0.8
+    })
+    
+    local menuKeyButtonText = get("new").drawing("Text", {
+        Visible = false,
+        Center = true,
+        Text = "Menu Key: " .. menu.menuKey.Name,
+        Size = 16,
+        Color = Color3.fromRGB(255, 255, 255),
+        Position = Vector2.new(menuKeyButton.Position.X + menuKeyButton.Size.X / 2, menuKeyButton.Position.Y + 7),
+        Outline = true,
+        OutlineColor = Color3.fromRGB(0, 0, 0)
+    })
+    
+    menu.elements = {
+        background = menuBackground,
+        header = menuHeader,
+        title = menuTitle,
+        espButton = espButton,
+        espButtonText = espButtonText,
+        teamCheckButton = teamCheckButton,
+        teamCheckButtonText = teamCheckButtonText,
+        menuKeyButton = menuKeyButton,
+        menuKeyButtonText = menuKeyButtonText
+    }
+    
+    -- Update button visibility
+    menu.toggle(menu.visible)
+    
+    -- Mouse handling for buttons and dragging
+    userInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local mousePos = userInputService:GetMouseLocation()
+            
+            -- Handle dragging the menu
+            if menu.visible and 
+               mousePos.X >= menuHeader.Position.X and 
+               mousePos.X <= menuHeader.Position.X + menuHeader.Size.X and 
+               mousePos.Y >= menuHeader.Position.Y and 
+               mousePos.Y <= menuHeader.Position.Y + menuHeader.Size.Y then
+                
+                menu.isDragging = true
+                menu.dragOffset = Vector2.new(mousePos.X - menuBackground.Position.X, mousePos.Y - menuBackground.Position.Y)
+                return
+            end
+            
+            -- ESP Button Click Handler
+            if menu.visible and 
+               mousePos.X >= espButton.Position.X and 
+               mousePos.X <= espButton.Position.X + espButton.Size.X and 
+               mousePos.Y >= espButton.Position.Y and 
+               mousePos.Y <= espButton.Position.Y + espButton.Size.Y then
+                
+                features.toggle(features, "visuals")
+                espButton.Color = features.visuals.enabled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+                espButtonText.Text = features.visuals.enabled and "ESP: AÇIK" or "ESP: KAPALI"
+                return
+            end
+            
+            -- Team Check Button Click Handler
+            if menu.visible and 
+               mousePos.X >= teamCheckButton.Position.X and 
+               mousePos.X <= teamCheckButton.Position.X + teamCheckButton.Size.X and 
+               mousePos.Y >= teamCheckButton.Position.Y and 
+               mousePos.Y <= teamCheckButton.Position.Y + teamCheckButton.Size.Y then
+                
+                features.visuals.teamCheck = not features.visuals.teamCheck
+                teamCheckButton.Color = features.visuals.teamCheck and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+                teamCheckButtonText.Text = features.visuals.teamCheck and "Takım Kontrolü: AÇIK" or "Takım Kontrolü: KAPALI"
+                return
+            end
+            
+            -- Menu Key Button Click Handler
+            if menu.visible and 
+               mousePos.X >= menuKeyButton.Position.X and 
+               mousePos.X <= menuKeyButton.Position.X + menuKeyButton.Size.X and 
+               mousePos.Y >= menuKeyButton.Position.Y and 
+               mousePos.Y <= menuKeyButton.Position.Y + menuKeyButton.Size.Y then
+                
+                -- Enable key binding mode
+                menu.changeKeyMode = true
+                menuKeyButtonText.Text = "Press Any Key..."
+                menuKeyButton.Color = Color3.fromRGB(255, 165, 0)  -- Orange to indicate waiting for input
+                return
+            end
+            
+            -- Handle key binding mode cancellation if clicking elsewhere
+            if menu.changeKeyMode then
+                menu.changeKeyMode = false
+                menuKeyButtonText.Text = "Menu Key: " .. menu.menuKey.Name
+                menuKeyButton.Color = Color3.fromRGB(60, 60, 200)
+            end
+        end
+    end)
+    
+    userInputService.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement and menu.isDragging then
+            local mousePos = userInputService:GetMouseLocation()
+            local newPos = Vector2.new(mousePos.X - menu.dragOffset.X, mousePos.Y - menu.dragOffset.Y)
+            
+            -- Update all menu element positions
+            local offsetX = newPos.X - menuBackground.Position.X
+            local offsetY = newPos.Y - menuBackground.Position.Y
+            
+            for _, element in menu.elements do
+                if element ~= menuBackground then
+                    element.Position = Vector2.new(element.Position.X + offsetX, element.Position.Y + offsetY)
+                end
+            end
+            
+            menuBackground.Position = newPos
+        end
+    end)
+    
+    userInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            menu.isDragging = false
+        end
+    end)
+    
+    -- Key binding for menu toggle and custom key
+    userInputService.InputBegan:Connect(function(input, gameProcessed)
+        if not gameProcessed and input.KeyCode == menu.menuKey then
+            menu.toggle(not menu.visible)
+        end
+        
+        -- Handle key binding if in key change mode
+        if menu.changeKeyMode and input.UserInputType == Enum.UserInputType.Keyboard then
+            menu.menuKey = input.KeyCode
+            menu.changeKeyMode = false
+            menuKeyButtonText.Text = "Menu Key: " .. menu.menuKey.Name
+            menuKeyButton.Color = Color3.fromRGB(60, 60, 200)
+        end
+    end)
+end
+
+-- Modified toggle function to apply rounded corners to UI elements
+menu.toggle = function(visible)
+    menu.visible = visible
+    
+    -- Apply rounded corners to UI elements when visible
+    local function applyRoundedCorners(element)
+        if element.SetFillCircle then -- Only attempt if the function exists
+            pcall(function()
+                -- For Square elements, attempt to apply rounded corners
+                -- Not all drawing libraries support this, so we use pcall
+                if typeof(element) == "table" and element.Size then
+                    element.Rounding = 6 -- Rounded corner radius
+                end
+            end)
+        end
+    end
+    
+    for _, element in menu.elements do
+        element.Visible = visible
+        
+        -- Try to apply rounded corners when toggling visibility
+        if visible and (element == menu.elements.background or 
+                       element == menu.elements.header or 
+                       element == menu.elements.espButton or 
+                       element == menu.elements.teamCheckButton or 
+                       element == menu.elements.menuKeyButton) then
+            applyRoundedCorners(element)
+        end
+    end
+end
+
+-- Create the menu
+menu.create()
+
+for _, player in players:GetPlayers() do
+	if player ~= client and not get("player"):find(player) then
+		get("player"):new(player)
+	end
+end
+
+declare(get("player"), "added", players.PlayerAdded:Connect(function(player)
+	get("player"):new(player)
+end), true)
+
+declare(get("player"), "removing", players.PlayerRemoving:Connect(function(player)
+	get("player"):remove(player)
+end), true)
